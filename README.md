@@ -48,9 +48,50 @@ bash setup.sh
 3. In `.env`, set `OWNER` (your name) and `LLM_MODEL` (exactly as `lms ls` shows it). If LM Studio's server requires an API token, set `LLM_API_KEY`.
 4. OpenWhispr settings: AI provider **LM Studio** at `http://127.0.0.1:1234/v1` (plus the LM Studio token, if any); **Notes → disk mirroring** to the same folder as `NOTES_DIR`.
 
-**4. Use it**
+**4. Describe your projects and labels** (once, then whenever you add one)
 
-Start **Research mode** from the app menu. Record meetings in OpenWhispr. A few minutes after a note is saved, cards appear in **Vikunja → Inbox → Suggested**. Drag them to **Approved** (they move to their project) or **Rejected**. Quit OpenWhispr from its tray icon and everything closes.
+The model chooses a project and labels for each task from what you have in Vikunja, so give it something to go on:
+
+- **Project descriptions:** open each project → **⋯ → Edit → Description**. Write 2–3 keyword-rich sentences: what it is, typical activities, distinctive terms, people who come up. The model sees the first 400 characters. Example:
+  > Thesis project: lateral intercostal nerve transfer to the stomach for gastroparesis, in rats. Rat surgeries, tissue clearing, histology (NF-200, synaptophysin), gastric motility and stimulation experiments. Usually discussed with Alan and Dan.
+- **Labels:** create labels for the kinds of work you do (e.g. *Logistics*, *Literature research*, *Surgeries and data acquisition*, *Thesis writing*). The model attaches 1–2 of them per task and never invents new ones.
+
+## Daily use
+
+**Start:** open **Research mode** from the app menu. It starts LM Studio's server, Vikunja and the inbox helper, opens OpenWhispr, and opens the board in your browser.
+
+**Meetings:** record in OpenWhispr as usual. Each note it saves to the notes folder is picked up automatically. You can also drop any transcript or notes file (`.md` or `.txt`) into the folder yourself. Put the date in the file name (`2026-10-07 lab meeting.md`) so "Friday" or "next Monday" resolve to the right dates.
+
+**Suggestions:** a few minutes after a note is saved (about 1 minute with `LLM_THINKING=0`, 5–8 with `auto`), cards appear in **Inbox → Suggested** (open the Inbox project and pick the **Kanban** view). Each card has:
+
+- a short title and a 1–4 sentence description of what to do
+- a due date and priority, if they were said in the meeting
+- a **Suggested project** line, the label *AI suggested*, and 1–2 of your own labels
+- the meeting note it came from
+
+Every action item from the meeting is suggested, whoever it was for. You decide which are yours.
+
+**Reviewing:** for each card in **Suggested**:
+
+| You want to… | Do this | What happens |
+|---|---|---|
+| Keep it | Drag it to **Approved** | Within a minute (`POLL_SECONDS`) it moves to its project's **To Do** column, keeping its labels |
+| Keep it, in another project | Edit the **Suggested project** line to another project's exact name, then drag to **Approved** | It moves to that project |
+| Change details | Edit the title, description, date or labels, then approve | Your edits are kept |
+| Drop it | Drag it to **Rejected** | It's marked done and stays in the Rejected column. Nothing is deleted |
+| Undo a rejection | Drag it back to **Suggested** or **Approved** | It's open again (and moved, if approved) |
+
+Rejected cards are hidden from lists and overviews but stay in the Kanban column. To clean up, open a card → **Delete** (permanent). The helper itself never deletes anything.
+
+If an approved card stays in **Approved** with a "Could not move" note, its Suggested project line doesn't match any project name (for example after you renamed a project). Fix the name; it moves at the next check.
+
+**Working on tasks:** use each project's board as normal: **Backlog → To Do → Doing → Done**.
+
+**Stop:** quit OpenWhispr from its tray icon (closing the window may only hide it). Research mode turns any remaining notes into suggestions first, then stops the helper, Vikunja and LM Studio. With reasoning on, this can take a few minutes after a meeting; let it finish. Suggestions appear in the Inbox the next time you open Research mode.
+
+**Re-run a note** (e.g. after editing it or changing settings): `touch ~/Documents/meeting-notes/<note>.md`. To see what the helper is doing: `docker compose logs -f inbox-helper`.
+
+**Faster or smarter:** `LLM_THINKING=0` in `.env` gives suggestions in about a minute; `auto` (default) reasons briefly first. Restart the helper after changing it: `docker compose restart inbox-helper`.
 
 ## Set up on Windows (untested)
 

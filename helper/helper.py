@@ -93,9 +93,23 @@ class Board:
         self.label = lab["id"]
         log(f"Inbox ready (project {self.pid}, columns {self.cols})")
 
-    def projects(self):
-        return {p["title"]: p["id"] for p in (api("GET", "/projects?per_page=200") or [])
-                if p["id"] != self.pid and not p.get("is_archived") and p["id"] > 0}
+    def labels(self):
+        """Your own labels (name -> id), without the helper's 'AI suggested' label."""
+        return {l["title"]: l["id"] for l in (api("GET", "/labels?per_page=200") or []) if l["id"] != self.label}
+
+    def projects(self, with_descriptions=False):
+        """Your projects (name -> id), or (name -> short plain-text description)."""
+        out = {}
+        for p in api("GET", "/projects?per_page=200") or []:
+            if p["id"] == self.pid or p.get("is_archived") or p["id"] <= 0:
+                continue
+            if with_descriptions:
+                text = html.unescape(re.sub(r"<[^>]+>", " ", p.get("description") or ""))
+                text = re.sub(r"\s+", " ", text).strip()
+                out[p["title"]] = (text[:400] + "…") if len(text) > 400 else text
+            else:
+                out[p["title"]] = p["id"]
+        return out
 
     def column_tasks(self, col):
         data = api("GET", f"/projects/{self.pid}/views/{self.vid}/tasks?per_page=200") or []
@@ -121,8 +135,9 @@ class Board:
 # ---------------------------------------------------------------- LLM
 SCHEMA = {"type": "object", "properties": {"tasks": {"type": "array", "items": {"type": "object", "properties": {
     "title": {"type": "string"}, "description": {"type": "string"}, "project": {"type": "string"},
+    "labels": {"type": "array", "items": {"type": "string"}},
     "priority": {"type": "integer", "minimum": 0, "maximum": 4},
-    "due_date": {"type": ["string", "null"]}}, "required": ["title", "description", "project", "priority", "due_date"]}}},
+    "due_date": {"type": ["string", "null"]}}, "required": ["title", "description", "project", "labels", "priority", "due_date"]}}},
     "required": ["tasks"]}
 
 
@@ -166,7 +181,7 @@ def ensure_model_loaded():
         return MODEL
 
 
-def extract(note, name, meeting_date, projects):
+def extract(note, name, meeting_date, projects, labels):
     system = (
         f"You turn meeting notes into action-item tickets for {OWNER} (the notes' owner).\n"
         "Rules:\n"
@@ -174,7 +189,12 @@ def extract(note, name, meeting_date, projects):
         "- title: short imperative, max 80 characters (e.g. 'Order 5-0 sutures for Sept 29 surgery').\n"
         "- description: 1-4 sentences: what exactly to do, the context/why, specifics mentioned (people, quantities, places), "
         "and when it counts as done.\n"
-        f"- project: exactly one of {json.dumps(sorted(projects))}, or 'Unsorted' if unclear.\n"
+        f"- project: exactly one of these project names: {json.dumps(sorted(projects))}. Pick the one the task is most clearly about, "
+        "using the project descriptions below. "
+        f"If that is unclear, pick the project named in the note title ('{name}') or in the meeting itself. "
+        "Use 'Unsorted' only if no project fits at all.\n"
+        + (f"- labels: 1-2 labels that describe the kind of work, chosen only from {json.dumps(sorted(labels))}. "
+           "Use an empty list if none fits. Never invent labels.\n" if labels else "- labels: always an empty list.\n") +
         "- priority: 0 unset, 1 low, 2 medium, 3 high, 4 urgent. Use 0 unless urgency was discussed.\n"
         f"- due_date: YYYY-MM-DD only if a deadline was stated; resolve relative dates against the meeting date {meeting_date}. Otherwise null.\n"
         "- Merge duplicates. If there are no action items, return an empty list.\n"
@@ -182,7 +202,9 @@ def extract(note, name, meeting_date, projects):
         "try to work out which speaker is who: list every task that was agreed in the meeting, and the owner will sort them later.\n"
         "'Today' means the meeting date; 'this week' means no fixed date unless a day is named; 'before <event>' means the event's date.\n"
         "This is a simple extraction task. Reason briefly (a few short lines): list the action items once, assign dates, then answer. "
-        "Do not deliberate, re-check or rewrite the list.")
+        "Do not deliberate, re-check or rewrite the list."
+        + ("\n\nProjects:\n" + "\n".join(f"- {k}: {v or '(no description)'}" for k, v in sorted(projects.items()))
+           if isinstance(projects, dict) else ""))
     # timestamps like "[03:21] " add tokens and nothing else
     text = re.sub(r"(?m)^\[\d{1,2}:\d{2}(?::\d{2})?\]\s*", "", note)[:30000]
 
@@ -261,20 +283,34 @@ def meeting_date(p):
     return m.group(1) if m else date.fromtimestamp(p.stat().st_mtime).isoformat()
 
 
+def pick_project(answer, title, note_name, projects):
+    """The model's project if it exists; otherwise a project named in the task title or the
+    note's file name; otherwise 'Unsorted'."""
+    by_lower = {k.lower(): k for k in projects}
+    if answer and answer.lower() in by_lower:
+        return by_lower[answer.lower()]
+    for text in (title, note_name):
+        for low, name in by_lower.items():
+            if re.search(rf"(?<![a-z0-9]){re.escape(low)}(?![a-z0-9])", text.lower()):
+                return name
+    return "Unsorted"
+
+
 def process_note(board, p):
     text = p.read_text(errors="replace").strip()
     if len(text) < 40:
         return 0
-    projects = board.projects()
+    projects = board.projects(with_descriptions=True)
+    labels = board.labels()
     existing = board.open_titles()
     log(f"note {p.name}: asking {MODEL} ...")
-    tasks = extract(text, p.name, meeting_date(p), projects)
+    tasks = extract(text, p.name, meeting_date(p), projects, labels)
     made = 0
     for t in tasks:
         title = t["title"].strip()[:250]
         if not title or norm(title) in existing:
             continue
-        proj = t["project"] if t["project"] in projects else "Unsorted"
+        proj = pick_project(t.get("project", ""), title, p.name, projects)
         desc = (f"<p>{html.escape(t['description'].strip())}</p>"
                 f"<p>Suggested project: <strong>{html.escape(proj)}</strong></p>"
                 f"<p><em>From meeting note: {html.escape(p.name)} ({meeting_date(p)}). Edit the project name above to send it elsewhere.</em></p>")
@@ -285,9 +321,13 @@ def process_note(board, p):
             "title": title, "description": desc, "priority": max(0, min(4, int(t.get("priority") or 0))),
             "due_date": f"{due}T17:00:00Z" if due else None})
         api("PUT", f"/tasks/{task['id']}/labels", {"label_id": board.label})
+        lower = {k.lower(): k for k in labels}
+        chosen = list(dict.fromkeys(lower[l.lower()] for l in (t.get("labels") or []) if l.lower() in lower))[:2]
+        for l in chosen:
+            api("PUT", f"/tasks/{task['id']}/labels", {"label_id": labels[l]})
         existing.add(norm(title))
         made += 1
-        log(f"  suggested: {title}  -> {proj}")
+        log(f"  suggested: {title}  -> {proj}" + (f"  [{', '.join(chosen)}]" if chosen else ""))
     return made
 
 
@@ -340,6 +380,13 @@ def main():
                     continue  # gave up on this version of the note; edit the note to retry
                 try:
                     n = process_note(board, p)
+                except urllib.error.HTTPError as e:  # a real error answer: count it, show it
+                    e = RuntimeError(f"HTTP {e.code} {e.url}: {e.read().decode()[:200]}")
+                    c = fails.get("count", 0) + 1 if fails.get("hash") == h else 1
+                    state[str(p) + "#failed"] = {"hash": h, "count": c}
+                    save_state(state)
+                    log(f"note {p.name}: attempt {c}/{MAX_TRIES} failed: {e}")
+                    continue
                 except (urllib.error.URLError, TimeoutError, ConnectionError):
                     raise  # connection problems: retry later without counting
                 except Exception as e:
