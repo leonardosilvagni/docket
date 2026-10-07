@@ -56,10 +56,11 @@ pgrep -x open-whispr >/dev/null && { say "OpenWhispr is already running"; exit 0
 pkill -f "/opt/OpenWhispr/resources/bin/" 2>/dev/null   # clear leftovers from a previous run
 
 # ---- start
-dc up -d || { say "Could not start Vikunja. Is Docker running?"; exit 1; }
-# start LM Studio's server on the port the helper expects (LLM_URL in .env, default 1234)
+# LM Studio first, so the helper finds it ready (port from LLM_URL in .env, default 1234)
 LM_PORT="$(grep -oP '^LLM_URL=.*:\K[0-9]+' "$DIR/.env" 2>/dev/null || echo 1234)"
 if [ -x "$LMS" ]; then "$LMS" server start --port "$LM_PORT"; else echo "LM Studio CLI (lms) not found"; fi
+for i in $(seq 30); do (exec 3<>"/dev/tcp/127.0.0.1/$LM_PORT") 2>/dev/null && break; sleep 1; done
+dc up -d || { say "Could not start Vikunja. Is Docker running?"; exit 1; }
 for i in $(seq 30); do curl -fs http://127.0.0.1/api/v1/info >/dev/null && break; sleep 1; done
 HOST="$(grep -oP '^VIKUNJA_HOST=\K\S+' "$DIR/.env" 2>/dev/null || echo research.localhost)"
 xdg-open "http://$HOST" >/dev/null 2>&1 &
