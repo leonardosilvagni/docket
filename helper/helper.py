@@ -21,7 +21,11 @@ VIKUNJA = os.environ.get("VIKUNJA_URL", "http://127.0.0.1").rstrip("/") + "/api/
 TOKEN = os.environ.get("VIKUNJA_TOKEN", "")
 LLM = os.environ.get("LLM_URL", "http://127.0.0.1:1234/v1").rstrip("/")
 MODEL = os.environ.get("LLM_MODEL", "qwen3.5-9b")
-THINK = os.environ.get("LLM_THINKING", "1") == "1"  # 1 = let the model reason first (slower, smarter)
+# 1 = always reason first; 0 = never; auto = reason within a budget, and if the budget runs out,
+# finish from that reasoning without reasoning further (bounded time, nothing thrown away)
+THINK = os.environ.get("LLM_THINKING", "auto").strip().lower()
+CONTEXT = int(os.environ.get("LLM_CONTEXT", "32768"))  # context length to load the model with (0 = leave to LM Studio)
+THINK_BUDGET = int(os.environ.get("LLM_THINK_BUDGET", "2500"))  # max tokens (reasoning + answer) in auto mode
 OWNER = os.environ.get("OWNER", "the person who owns these notes")
 LLM_KEY = os.environ.get("LLM_API_KEY", "")  # only if LM Studio's server requires an API token
 NOTES = Path(os.environ.get("NOTES_DIR", "/notes"))
@@ -117,6 +121,38 @@ SCHEMA = {"type": "object", "properties": {"tasks": {"type": "array", "items": {
     "required": ["tasks"]}
 
 
+def ensure_model_loaded():
+    """Load the model with CONTEXT tokens if it isn't already (LM Studio's own API).
+    Without this, LM Studio loads it on demand with its default, often only 4-8k tokens."""
+    if not CONTEXT:
+        return
+    base = re.sub(r"/v1/?$", "", LLM)
+    auth = {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else None
+    try:
+        models = http("GET", base + "/api/v1/models", headers=auth)
+        models = models.get("models", models.get("data", [])) if isinstance(models, dict) else models
+        def names(m):
+            ids = {m.get(k) for k in ("key", "id", "model_key", "display_name") if m.get(k)}
+            return ids | {i.split("/")[-1] for i in ids}  # "qwen/qwen3.5-9b" also matches "qwen3.5-9b"
+        m = next((m for m in models if MODEL in names(m)), None)
+        if m is None:
+            log(f"  model {MODEL} not found in LM Studio's model list; using it as is (check LLM_MODEL against lms ls)")
+            return
+        for inst in m.get("loaded_instances") or []:
+            ctx = (inst.get("config") or {}).get("context_length", 0)
+            if ctx >= CONTEXT:
+                return
+            log(f"  {MODEL} is loaded with only {ctx} tokens of context; reloading with {CONTEXT}")
+            http("POST", base + "/api/v1/models/unload", {"instance_id": inst["id"]}, auth)
+        log(f"  loading {MODEL} with {CONTEXT} tokens of context ...")
+        key = m.get("key") or m.get("id") or MODEL
+        http("POST", base + "/api/v1/models/load", {"model": key, "context_length": CONTEXT}, auth, timeout=600)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise
+        log(f"  could not set the context length automatically (HTTP {e.code}); LM Studio will use its default")
+
+
 def extract(note, name, meeting_date, projects):
     system = (
         f"You turn meeting notes into action-item tickets for {OWNER} (the notes' owner).\n"
@@ -132,23 +168,53 @@ def extract(note, name, meeting_date, projects):
         f"- Every action item is for {OWNER}, no matter who said it or who volunteered. Never write an owner and never "
         "try to work out which speaker is who: list every task that was agreed in the meeting, and the owner will sort them later.\n"
         "'Today' means the meeting date; 'this week' means no fixed date unless a day is named; 'before <event>' means the event's date.\n"
-        "Think step by step, but briefly: list the action items once, decide dates, then answer. Do not re-check your list more than once.")
-    body = {"model": MODEL, "temperature": 0.2,
-            "messages": [{"role": "system", "content": system},
-                         {"role": "user", "content": ("" if THINK else "/no_think\n") + f"Meeting note '{name}' ({meeting_date}):\n\n{note[:30000]}"}],
-            "response_format": {"type": "json_schema", "json_schema": {"name": "tickets", "strict": True, "schema": SCHEMA}}}
-    if not THINK:
-        body.update(chat_template_kwargs={"enable_thinking": False}, reasoning_effort="none")
-    r = http("POST", LLM + "/chat/completions", body, {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else None, timeout=1800)
-    choice = r["choices"][0]
-    txt = choice["message"].get("content") or ""
-    if not txt.strip():
-        raise RuntimeError(f"model returned no answer (finish_reason={choice.get('finish_reason')}, "
-                           f"tokens={r.get('usage', {})}). Likely the context length is too small: "
-                           "set it to 16384+ for this model in LM Studio (My Models > model settings).")
-    txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.S).strip()
-    txt = txt[txt.find("{"): txt.rfind("}") + 1]
-    return json.loads(txt).get("tasks", [])
+        "This is a simple extraction task. Reason briefly (a few short lines): list the action items once, assign dates, then answer. "
+        "Do not deliberate, re-check or rewrite the list.")
+    # timestamps like "[03:21] " add tokens and nothing else
+    text = re.sub(r"(?m)^\[\d{1,2}:\d{2}(?::\d{2})?\]\s*", "", note)[:30000]
+
+    def ask(think, limit=None, draft=""):
+        user = f"Meeting note '{name}' ({meeting_date}):\n\n{text}"
+        if draft:  # continue from the reasoning done so far instead of starting over
+            user += ("\n\nYour analysis so far (it was cut off, so finish it quickly):\n" + draft[-12000:] +
+                     "\n\nNow give the final answer.")
+        body = {"model": MODEL, "temperature": 0.2,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": ("" if think else "/no_think\n") + user}],
+                "response_format": {"type": "json_schema", "json_schema": {"name": "tickets", "strict": True, "schema": SCHEMA}}}
+        if not think:
+            body.update(chat_template_kwargs={"enable_thinking": False}, reasoning_effort="none")
+        if limit:
+            body["max_tokens"] = limit
+        r = http("POST", LLM + "/chat/completions", body, {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else None, timeout=1800)
+        choice = r["choices"][0]
+        txt = re.sub(r"<think>.*?</think>", "", choice["message"].get("content") or "", flags=re.S).strip()
+        txt = txt[txt.find("{"): txt.rfind("}") + 1]
+        try:
+            return json.loads(txt).get("tasks", []), None
+        except ValueError:
+            msg = choice["message"]
+            reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
+            if not reasoning:
+                m = re.search(r"<think>(.*)", msg.get("content") or "", flags=re.S)
+                reasoning = m.group(1) if m else ""
+            ask.draft = reasoning
+            return None, f"finish_reason={choice.get('finish_reason')}, tokens={r.get('usage', {})}"
+
+    ensure_model_loaded()
+    if THINK in ("0", "off", "no", "false"):
+        tasks, why = ask(False)
+    elif THINK in ("1", "on", "yes", "true"):
+        tasks, why = ask(True)
+    else:  # auto
+        tasks, why = ask(True, THINK_BUDGET)
+        if tasks is None:
+            log(f"  reasoning ran past {THINK_BUDGET} tokens; continuing from it without further reasoning")
+            tasks, why = ask(False, draft=getattr(ask, "draft", ""))
+    if tasks is None:
+        raise RuntimeError(f"model returned no usable answer ({why}). If finish_reason is 'length', "
+                           "raise the context length for this model in LM Studio (My Models > model settings).")
+    return tasks
 
 
 # ---------------------------------------------------------------- work
@@ -282,8 +348,13 @@ def main():
             log(f"HTTP {e.code} {e.url}: {e.read().decode()[:300]}")
             board = None
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            log(f"connection problem ({e}); retrying in {POLL}s")
+            if drain:
+                log(f"connection problem ({e}); notes will be processed next time")
+                sys.exit(1)
+            log(f"connection problem ({e}); retrying in 30s")
             board = None
+            time.sleep(30)
+            continue
         except Exception as e:  # keep the service alive
             log(f"error: {type(e).__name__}: {e}")
         if drain:
