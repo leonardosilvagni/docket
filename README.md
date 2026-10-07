@@ -1,4 +1,4 @@
-# Research mode
+# Docket
 
 A local, subscription-free setup that records meetings, turns them into suggested tasks with an AI model running on your own computer, and lets you approve them on a Kanban board.
 
@@ -15,7 +15,7 @@ OpenWhispr ──note──▶ meeting-notes/ ──▶ inbox helper ──▶ L
 | **LM Studio** | Runs the model (tested: Qwen3.5 9B) and serves it at `127.0.0.1:1234` |
 | **Vikunja** | Task boards (SQLite, Docker) |
 | **Inbox helper** | `helper/helper.py`: new note → suggested cards; approved cards → their project. Python standard library, ~15 MB RAM |
-| **Research mode** | Launcher: opens everything, and closes everything when you quit OpenWhispr |
+| **Launcher** (`docket.sh`) | Opens everything, and closes everything when you quit OpenWhispr |
 
 Nothing leaves your computer. Vikunja and LM Studio only listen on `127.0.0.1`.
 
@@ -34,16 +34,16 @@ sudo usermod -aG docker $USER        # then reboot (logging out is often not eno
 **2. Get this repo and run the setup script**
 
 ```bash
-git clone <repo-url> ~/installs/research-mode
-cd ~/installs/research-mode
+git clone <repo-url> ~/installs/docket
+cd ~/installs/docket
 bash setup.sh
 ```
 
-`setup.sh` creates `.env` with a new secret, creates the notes folder (`~/Documents/meeting-notes`), adds **Research mode** to the app menu, checks that everything is installed, and starts Vikunja. It lists anything still missing; fix it and run it again.
+`setup.sh` creates `.env` with a new secret, creates the notes folder (`~/Documents/meeting-notes`), adds **Docket** to the app menu, checks that everything is installed, and starts Vikunja. It lists anything still missing; fix it and run it again.
 
 **3. Finish the settings** (the script prints these steps too)
 
-1. Open **http://research.localhost**, create your Vikunja account.
+1. Open **http://docket.localhost**, create your Vikunja account.
 2. Vikunja → Settings → **API Tokens** → create one → put it in `.env` as `VIKUNJA_TOKEN`.
 3. In `.env`, set `OWNER` (your name) and `LLM_MODEL` (exactly as `lms ls` shows it). If LM Studio's server requires an API token, set `LLM_API_KEY`.
 4. OpenWhispr settings: AI provider **LM Studio** at `http://127.0.0.1:1234/v1` (plus the LM Studio token, if any); **Notes → disk mirroring** to the same folder as `NOTES_DIR`.
@@ -58,7 +58,7 @@ The model chooses a project and labels for each task from what you have in Vikun
 
 ## Daily use
 
-**Start:** open **Research mode** from the app menu. It starts LM Studio's server, Vikunja and the inbox helper, opens OpenWhispr, and opens the board in your browser.
+**Start:** open **Docket** from the app menu. It starts LM Studio's server, Vikunja and the inbox helper, opens OpenWhispr, and opens the board in your browser.
 
 **Meetings:** record in OpenWhispr as usual. Each note it saves to the notes folder is picked up automatically. You can also drop any transcript or notes file (`.md` or `.txt`) into the folder yourself. Put the date in the file name (`2026-10-07 lab meeting.md`) so "Friday" or "next Monday" resolve to the right dates.
 
@@ -87,7 +87,7 @@ If an approved card stays in **Approved** with a "Could not move" note, its Sugg
 
 **Working on tasks:** use each project's board as normal: **Backlog → To Do → Doing → Done**.
 
-**Stop:** quit OpenWhispr from its tray icon (closing the window may only hide it). Research mode turns any remaining notes into suggestions first, then stops the helper, Vikunja and LM Studio. With reasoning on, this can take a few minutes after a meeting; let it finish. Suggestions appear in the Inbox the next time you open Research mode.
+**Stop:** quit OpenWhispr from its tray icon (closing the window may only hide it). Docket turns any remaining notes into suggestions first, then stops the helper, Vikunja and LM Studio. With reasoning on, this can take a few minutes after a meeting; let it finish. Suggestions appear in the Inbox the next time you open Docket.
 
 **Re-run a note** (e.g. after editing it or changing settings): `touch ~/Documents/meeting-notes/<note>.md`. To see what the helper is doing: `docker compose logs -f inbox-helper`.
 
@@ -100,14 +100,14 @@ Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in t
 1. `copy .env.example .env` and fill it in by hand: generate `VIKUNJA_JWTSECRET` with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, set `NOTES_DIR` with forward slashes (`C:/Users/you/Documents/meeting-notes`) and `LLM_URL=http://host.docker.internal:1234/v1`.
 2. Create the folders `db`, `files`, `helper\state`.
 3. Start once with both compose files: `docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d vikunja`, then create your account and token as above.
-4. Check the OpenWhispr path at the top of `research-mode.ps1`, then make a desktop shortcut to
-   `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "<repo>\research-mode.ps1"`.
+4. Check the OpenWhispr path at the top of `docket.ps1`, then make a desktop shortcut to
+   `powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "<repo>\docket.ps1"`.
 
 ## Settings (`.env`)
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `VIKUNJA_HOST` | `research.localhost` | Board address. Any `*.localhost` name works without a hosts entry; other names need `127.0.0.1 <name>` in `/etc/hosts` |
+| `VIKUNJA_HOST` | `docket.localhost` | Board address. Any `*.localhost` name works without a hosts entry; other names need `127.0.0.1 <name>` in `/etc/hosts` |
 | `VIKUNJA_JWTSECRET` | (generated) | Signs Vikunja logins. Keep it the same when moving machines |
 | `VIKUNJA_TOKEN` | | Vikunja API token for the helper. Needs read/create/update on tasks; no delete |
 | `NOTES_DIR` | `~/Documents/meeting-notes` | Folder OpenWhispr writes notes to |
@@ -133,8 +133,8 @@ Restart the helper after changing `.env`: `docker compose restart inbox-helper`.
 | `docker-compose.windows.yml` | Windows (Docker Desktop) override |
 | `.env.example` | Settings template |
 | `helper/helper.py` | The inbox helper |
-| `research-mode.sh`, `research-mode.desktop` | Linux launcher and app-menu entry |
-| `research-mode.ps1` | Windows launcher |
+| `docket.sh`, `docket.desktop` | Linux launcher and app-menu entry |
+| `docket.ps1` | Windows launcher |
 
 Not in git (see `.gitignore`): `.env` (tokens), `db/` and `files/` (your tasks), `helper/state/`, logs.
 
@@ -144,7 +144,7 @@ Two logs tell you almost everything:
 
 ```bash
 docker compose logs --tail 30 inbox-helper    # what the helper did with each note
-tail -40 research-mode.log                     # what the launcher did
+tail -40 docket.log                     # what the launcher did
 ```
 
 | Log line or symptom | Fix |

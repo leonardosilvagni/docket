@@ -1,15 +1,15 @@
-# Research mode for Windows: open everything, close everything when OpenWhispr quits.
-# Usage:  powershell -ExecutionPolicy Bypass -File research-mode.ps1          (start)
-#         powershell -ExecutionPolicy Bypass -File research-mode.ps1 -Stop    (force stop)
+# Docket for Windows: open everything, close everything when OpenWhispr quits.
+# Usage:  powershell -ExecutionPolicy Bypass -File docket.ps1          (start)
+#         powershell -ExecutionPolicy Bypass -File docket.ps1 -Stop    (force stop)
 # Not yet tested on a real Windows PC: check the OpenWhispr path below on first use.
 param([switch]$Stop)
 $Dir = $PSScriptRoot
-Start-Transcript -Path (Join-Path $Dir 'research-mode.log') -Append | Out-Null
+Start-Transcript -Path (Join-Path $Dir 'docket.log') -Append | Out-Null
 
 # --- settings
 $OpenWhispr = "$env:LOCALAPPDATA\Programs\OpenWhispr\OpenWhispr.exe"
 $DockerApp  = "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
-$VikunjaHost = 'research.localhost'
+$VikunjaHost = 'docket.localhost'
 $EnvFile = Join-Path $Dir '.env'
 if (Test-Path $EnvFile) {
   $line = Select-String -Path $EnvFile -Pattern '^VIKUNJA_HOST=(\S+)' | Select-Object -First 1

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Research mode: one launcher for the whole note-taking setup.
+# Docket: one launcher for the whole note-taking setup.
 #
-#   research-mode.sh         open everything: Vikunja + inbox helper (Docker), LM Studio,
+#   docket.sh         open everything: Vikunja + inbox helper (Docker), LM Studio,
 #                            OpenWhispr, and the Vikunja board in your browser.
 #                            Quit OpenWhispr and everything closes again (the last notes
 #                            are turned into tickets first).
-#   research-mode.sh stop    emergency stop, if something was left running.
+#   docket.sh stop    emergency stop, if something was left running.
 set -u
 DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-exec >>"$DIR/research-mode.log" 2>&1
-echo "=== $(date '+%F %T') research mode ${1:-start}"
+exec >>"$DIR/docket.log" 2>&1
+echo "=== $(date '+%F %T') docket ${1:-start}"
 
-say() { echo "$1"; command -v notify-send >/dev/null && notify-send -a "Research mode" "Research mode" "$1"; }
+say() { echo "$1"; command -v notify-send >/dev/null && notify-send -a "Docket" "Docket" "$1"; }
 
 # Docker without sudo if you're in the docker group, otherwise a password dialog
 if docker info >/dev/null 2>&1; then DOCKER=(docker); else DOCKER=(pkexec docker); fi
@@ -62,7 +62,7 @@ if [ -x "$LMS" ]; then "$LMS" server start --port "$LM_PORT"; else echo "LM Stud
 for i in $(seq 30); do (exec 3<>"/dev/tcp/127.0.0.1/$LM_PORT") 2>/dev/null && break; sleep 1; done
 dc up -d || { say "Could not start Vikunja. Is Docker running?"; exit 1; }
 for i in $(seq 30); do curl -fs http://127.0.0.1/api/v1/info >/dev/null && break; sleep 1; done
-HOST="$(grep -oP '^VIKUNJA_HOST=\K\S+' "$DIR/.env" 2>/dev/null || echo research.localhost)"
+HOST="$(grep -oP '^VIKUNJA_HOST=\K\S+' "$DIR/.env" 2>/dev/null || echo docket.localhost)"
 xdg-open "http://$HOST" >/dev/null 2>&1 &
 say "Started. Quit OpenWhispr (tray icon → Quit) to close everything."
 

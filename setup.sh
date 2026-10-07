@@ -25,8 +25,9 @@ notes="$(grep -oP '^NOTES_DIR=\K.*' .env || true)"
 
 echo "App menu"
 mkdir -p "$HOME/.local/share/applications"
-sed "s|REPO|$DIR|g" research-mode.desktop > "$HOME/.local/share/applications/research-mode.desktop"
-ok "Research mode added to the app menu"
+sed "s|REPO|$DIR|g" docket.desktop > "$HOME/.local/share/applications/docket.desktop"
+rm -f "$HOME/.local/share/applications/research-mode.desktop"   # old name
+ok "Docket added to the app menu"
 
 echo "Checks"
 command -v python3 >/dev/null && ok "python3" || todo "install python3"
@@ -43,7 +44,7 @@ if [ -x /opt/OpenWhispr/open-whispr ] || command -v open-whispr >/dev/null; then
 else todo "install OpenWhispr (.deb from its GitHub releases)"; fi
 command -v pactl >/dev/null && ok "pactl (meeting detection)" || todo "sudo apt install pulseaudio-utils"
 
-host="$(grep -oP '^VIKUNJA_HOST=\K\S+' .env || echo research.localhost)"
+host="$(grep -oP '^VIKUNJA_HOST=\K\S+' .env || echo docket.localhost)"
 case "$host" in
   *.localhost) ok "board address: http://$host (no hosts entry needed)" ;;
   *) if getent hosts "$host" | grep -q '127.0.0.1'; then ok "board address: http://$host"
@@ -62,6 +63,6 @@ echo "  2. In Vikunja: Settings > API Tokens > create one; paste it into .env as
 echo "  3. In LM Studio: download your model, start nothing else; set LLM_MODEL in .env to its name (lms ls)."
 echo "     If LM Studio's server requires an API token, put it in .env as LLM_API_KEY (and in OpenWhispr)."
 echo "  4. In OpenWhispr: AI provider = LM Studio (http://127.0.0.1:1234/v1); Notes > disk mirroring = $notes"
-echo "  5. Start 'Research mode' from the app menu."
+echo "  5. Start 'Docket' from the app menu."
 [ "$TODO" = 1 ] && echo "Fix the • items above first, then run this script again."
 exit 0
