@@ -104,13 +104,18 @@ class Board:
         return [t for t in data if t.get("bucket_id") == self.cols[col]]
 
     def open_titles(self):
+        """Titles of open tasks, to skip duplicate suggestions. Best effort: never blocks a note."""
         out, page = set(), 1
-        while True:
-            batch = api("GET", f"/tasks/all?filter=done%20%3D%20false&per_page=200&page={page}") or []
-            out |= {norm(t["title"]) for t in batch}
-            if len(batch) < 200:
-                return out
-            page += 1
+        try:
+            while page <= 20:
+                batch = api("GET", f"/tasks/all?per_page=50&page={page}") or []
+                out |= {norm(t["title"]) for t in batch if not t.get("done")}
+                if len(batch) < 50:
+                    break
+                page += 1
+        except urllib.error.HTTPError as e:
+            log(f"  could not list existing tasks for duplicate check (HTTP {e.code}); continuing without it")
+        return out
 
 
 # ---------------------------------------------------------------- LLM
@@ -261,9 +266,9 @@ def process_note(board, p):
     if len(text) < 40:
         return 0
     projects = board.projects()
+    existing = board.open_titles()
     log(f"note {p.name}: asking {MODEL} ...")
     tasks = extract(text, p.name, meeting_date(p), projects)
-    existing = board.open_titles()
     made = 0
     for t in tasks:
         title = t["title"].strip()[:250]
