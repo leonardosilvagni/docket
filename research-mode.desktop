@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Research mode
+Comment=OpenWhispr + LM Studio + Vikunja inbox helper, started and stopped together
+# Install: replace REPO with the full path to this folder, then copy this file
+# to ~/.local/share/applications/
+Exec=/bin/bash REPO/research-mode.sh
+Icon=audio-input-microphone
+Terminal=false
+Categories=Office;
+Actions=stop;
+
+[Desktop Action stop]
+Name=Force stop everything
+Exec=/bin/bash REPO/research-mode.sh stop

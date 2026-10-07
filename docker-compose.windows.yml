@@ -1,0 +1,10 @@
+# Windows (Docker Desktop) only. Use together with docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.windows.yml up -d
+# Docker Desktop handles host networking differently, so the helper reaches
+# Vikunja and LM Studio through host.docker.internal instead.
+# Also set LLM_URL=http://host.docker.internal:1234/v1 in .env.
+services:
+  inbox-helper:
+    network_mode: bridge
+    environment:
+      VIKUNJA_URL: http://host.docker.internal

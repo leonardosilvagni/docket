@@ -1,0 +1,37 @@
+services:
+  vikunja:
+    image: vikunja/vikunja
+    container_name: vikunja
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: http://${VIKUNJA_HOST:-research.localhost}/
+      VIKUNJA_SERVICE_JWTSECRET: ${VIKUNJA_JWTSECRET:-${VIKUNJA_SERVICE_JWTSECRET:?set VIKUNJA_JWTSECRET in .env}}
+      VIKUNJA_DATABASE_TYPE: sqlite
+      VIKUNJA_DATABASE_PATH: /db/vikunja.db
+    ports:
+      - "127.0.0.1:80:3456"
+    volumes:
+      - ./files:/app/vikunja/files
+      - ./db:/db
+    restart: on-failure
+
+  # Turns meeting notes into suggested tickets in the Inbox board,
+  # and moves cards you drag to "Approved" into their project.
+  inbox-helper:
+    image: python:3.13-alpine
+    container_name: vikunja-inbox-helper
+    command: python -u /app/helper.py
+    network_mode: host            # reaches Vikunja and LM Studio on 127.0.0.1
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      VIKUNJA_URL: http://127.0.0.1
+      NOTES_DIR: /notes
+      STATE_FILE: /state/processed.json
+    volumes:
+      - ./helper:/app:ro
+      - ${NOTES_DIR:?set NOTES_DIR in .env}:/notes:ro
+      - ./helper/state:/state
+    mem_limit: 64m
+    depends_on:
+      - vikunja
+    restart: on-failure

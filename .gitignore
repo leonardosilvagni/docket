@@ -1,0 +1,13 @@
+# Secrets
+.env
+# Your data
+db/
+files/
+helper/state/
+meeting-notes/
+# Logs and caches
+*.log
+__pycache__/
+# Personal one-time migration from Plane
+tickets.json
+import_tickets.py
