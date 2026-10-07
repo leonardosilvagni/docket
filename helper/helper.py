@@ -122,35 +122,43 @@ SCHEMA = {"type": "object", "properties": {"tasks": {"type": "array", "items": {
 
 
 def ensure_model_loaded():
-    """Load the model with CONTEXT tokens if it isn't already (LM Studio's own API).
-    Without this, LM Studio loads it on demand with its default, often only 4-8k tokens."""
+    """Make sure exactly one copy of the model is loaded, with CONTEXT tokens, and return
+    the name to send requests to. Requests must use the loaded copy's exact id: otherwise
+    LM Studio loads a second copy on demand (with its small default context)."""
     if not CONTEXT:
-        return
+        return MODEL
     base = re.sub(r"/v1/?$", "", LLM)
     auth = {"Authorization": f"Bearer {LLM_KEY}"} if LLM_KEY else None
     try:
         models = http("GET", base + "/api/v1/models", headers=auth)
         models = models.get("models", models.get("data", [])) if isinstance(models, dict) else models
+
         def names(m):
             ids = {m.get(k) for k in ("key", "id", "model_key", "display_name") if m.get(k)}
             return ids | {i.split("/")[-1] for i in ids}  # "qwen/qwen3.5-9b" also matches "qwen3.5-9b"
+
         m = next((m for m in models if MODEL in names(m)), None)
         if m is None:
             log(f"  model {MODEL} not found in LM Studio's model list; using it as is (check LLM_MODEL against lms ls)")
-            return
-        for inst in m.get("loaded_instances") or []:
-            ctx = (inst.get("config") or {}).get("context_length", 0)
-            if ctx >= CONTEXT:
-                return
-            log(f"  {MODEL} is loaded with only {ctx} tokens of context; reloading with {CONTEXT}")
-            http("POST", base + "/api/v1/models/unload", {"instance_id": inst["id"]}, auth)
+            return MODEL
+        instances = m.get("loaded_instances") or []
+        ctx = lambda i: (i.get("config") or {}).get("context_length", 0)
+        keep = next((i for i in sorted(instances, key=ctx, reverse=True) if ctx(i) >= CONTEXT), None)
+        for inst in instances:  # one copy only: unload duplicates and too-small copies
+            if inst is not keep:
+                log(f"  unloading extra copy {inst['id']} ({ctx(inst)} tokens of context)")
+                http("POST", base + "/api/v1/models/unload", {"instance_id": inst["id"]}, auth)
+        if keep:
+            return keep["id"]
         log(f"  loading {MODEL} with {CONTEXT} tokens of context ...")
         key = m.get("key") or m.get("id") or MODEL
-        http("POST", base + "/api/v1/models/load", {"model": key, "context_length": CONTEXT}, auth, timeout=600)
+        r = http("POST", base + "/api/v1/models/load", {"model": key, "context_length": CONTEXT}, auth, timeout=600) or {}
+        return r.get("instance_id") or key
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             raise
         log(f"  could not set the context length automatically (HTTP {e.code}); LM Studio will use its default")
+        return MODEL
 
 
 def extract(note, name, meeting_date, projects):
@@ -173,12 +181,14 @@ def extract(note, name, meeting_date, projects):
     # timestamps like "[03:21] " add tokens and nothing else
     text = re.sub(r"(?m)^\[\d{1,2}:\d{2}(?::\d{2})?\]\s*", "", note)[:30000]
 
+    use_model = ensure_model_loaded()
+
     def ask(think, limit=None, draft=""):
         user = f"Meeting note '{name}' ({meeting_date}):\n\n{text}"
         if draft:  # continue from the reasoning done so far instead of starting over
             user += ("\n\nYour analysis so far (it was cut off, so finish it quickly):\n" + draft[-12000:] +
                      "\n\nNow give the final answer.")
-        body = {"model": MODEL, "temperature": 0.2,
+        body = {"model": use_model, "temperature": 0.2,
                 "messages": [{"role": "system", "content": system},
                              {"role": "user", "content": ("" if think else "/no_think\n") + user}],
                 "response_format": {"type": "json_schema", "json_schema": {"name": "tickets", "strict": True, "schema": SCHEMA}}}
@@ -201,7 +211,6 @@ def extract(note, name, meeting_date, projects):
             ask.draft = reasoning
             return None, f"finish_reason={choice.get('finish_reason')}, tokens={r.get('usage', {})}"
 
-    ensure_model_loaded()
     if THINK in ("0", "off", "no", "false"):
         tasks, why = ask(False)
     elif THINK in ("1", "on", "yes", "true"):

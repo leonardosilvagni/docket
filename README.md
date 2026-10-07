@@ -72,7 +72,7 @@ Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in t
 | `NOTES_DIR` | `~/Documents/meeting-notes` | Folder OpenWhispr writes notes to |
 | `OWNER` | | Whose tasks these are; every action item is assigned to this person |
 | `LLM_URL` | `http://127.0.0.1:1234/v1` | LM Studio server |
-| `LLM_MODEL` | `qwen3.5-9b` | Model name as `lms ls` shows it |
+| `LLM_MODEL` | `qwen/qwen3.5-9b` | Model name as `lms ls` shows it |
 | `LLM_API_KEY` | | LM Studio token, if its server requires one |
 | `LLM_CONTEXT` | `32768` | The helper (re)loads the model with this context length |
 | `LLM_THINKING` | `auto` | `auto`: reason up to the budget, then finish from that reasoning. `1`: unlimited. `0`: off (fastest) |
