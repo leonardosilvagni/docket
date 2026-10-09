@@ -5,7 +5,7 @@ services:
     image: vikunja/vikunja
     container_name: vikunja
     environment:
-      VIKUNJA_SERVICE_PUBLICURL: http://${VIKUNJA_HOST:-docket.localhost}/
+      VIKUNJA_SERVICE_PUBLICURL: https://${VIKUNJA_HOST:-docket.localhost}/
       VIKUNJA_SERVICE_JWTSECRET: ${VIKUNJA_JWTSECRET:-${VIKUNJA_SERVICE_JWTSECRET:?set VIKUNJA_JWTSECRET in .env}}
       VIKUNJA_DATABASE_TYPE: sqlite
       VIKUNJA_DATABASE_PATH: /db/vikunja.db

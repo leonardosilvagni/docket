@@ -17,7 +17,7 @@ OpenWhispr ──note──▶ meeting-notes/ ──▶ inbox helper ──▶ L
 | **Inbox helper** | `helper/helper.py`: new note → suggested cards; approved cards → their project. Python standard library, ~15 MB RAM |
 | **Launcher** (`docket.sh`) | Opens everything, and closes everything when you quit OpenWhispr |
 
-Nothing leaves your computer. Vikunja and LM Studio only listen on `127.0.0.1`.
+Nothing leaves your computer. Vikunja and LM Studio only listen on `127.0.0.1`. The only way in from another device is through your own Tailscale network (see [Use it from your phone](#use-it-from-your-phone-tailscale)).
 
 ## Set up on a new Linux machine
 
@@ -93,6 +93,42 @@ If an approved card stays in **Approved** with a "Could not move" note, its Sugg
 
 **Faster or smarter:** `LLM_THINKING=0` in `.env` gives suggestions in about a minute; `auto` (default) reasons briefly first. Restart the helper after changing it: `docker compose restart inbox-helper`.
 
+## Use it from your phone (Tailscale)
+
+Vikunja is bound to `127.0.0.1:80`, so nothing on your LAN or the internet can reach it directly. Tailscale (a private network between your own devices) is the only way in from the phone. Current setup:
+
+| Item | Value |
+|---|---|
+| PC (host) | `leo-pc`, Tailscale name `leo-pc.taila60bcc.ts.net` |
+| Address to use, on PC and phone | **https://leo-pc.taila60bcc.ts.net** |
+| Port | Vikunja stays on `127.0.0.1:80`; Tailscale serves it on 443 |
+
+**What was done**
+
+1. Installed Tailscale on the PC and on the phone, signed in to the same account.
+2. In the Tailscale admin console → **DNS**: MagicDNS on, and **HTTPS Certificates** enabled.
+3. On the PC: `sudo tailscale serve --bg 80`. This publishes Vikunja at the `https://…ts.net` address above, inside the tailnet only. `--bg` keeps it running across reboots; `tailscale serve status` shows it.
+4. In `.env`: `VIKUNJA_HOST=leo-pc.taila60bcc.ts.net` (name only, no `https://`, no trailing slash).
+5. In `docker-compose.yml`: `VIKUNJA_SERVICE_PUBLICURL` now starts with `https://` (it was `http://`).
+6. `docker compose up -d` to recreate Vikunja with the new public URL.
+
+**Why the public URL matters.** Vikunja's web page takes its API address from `VIKUNJA_SERVICE_PUBLICURL`. If you open the board under any other name, the page loads but login fails with "network error", or Vikunja says "use the Vikunja installation at …". Vikunja can only be reached under one name at a time, so use the `.ts.net` address everywhere (PC browser, phone, bookmarks) instead of `docket.localhost`.
+
+**On the phone:** Tailscale must be connected (Android allows one active VPN at a time, so another VPN app such as Surfshark has to be off), then open the address in Chrome. Use **Add to Home Screen** to install it as an app; this needs the HTTPS address. The PC must be on, awake and running Docker.
+
+**Check it is applied** (from the repo folder):
+
+```bash
+docker compose config | grep PUBLICURL
+docker inspect vikunja --format '{{range .Config.Env}}{{println .}}{{end}}' | grep PUBLICURL
+```
+
+Both should print `https://leo-pc.taila60bcc.ts.net/`.
+
+**If you rename the PC or the tailnet:** the address changes. Update `VIKUNJA_HOST`, run `docker compose up -d`, check `tailscale serve status` (re-run `sudo tailscale serve --bg 80` if the new address is missing), and sign in again on the phone. The machine name can be changed in the admin console or with `tailscale set --hostname=<name>`. The tailnet name can only be changed to one of the generated options (admin console → DNS → Rename tailnet).
+
+**Going back to local-only** (`docket.localhost`): set `VIKUNJA_HOST=docket.localhost` and change `https://` back to `http://` in the `VIKUNJA_SERVICE_PUBLICURL` line of `docker-compose.yml`, then `docker compose up -d`.
+
 ## Set up on Windows (untested)
 
 Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in the repo folder:
@@ -107,7 +143,7 @@ Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in t
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `VIKUNJA_HOST` | `docket.localhost` | Board address. Any `*.localhost` name works without a hosts entry; other names need `127.0.0.1 <name>` in `/etc/hosts` |
+| `VIKUNJA_HOST` | `docket.localhost` | Board address. Must be the name you actually open in the browser. With Tailscale: `leo-pc.taila60bcc.ts.net` (the compose file builds an `https://` public URL from it). For local-only use, any `*.localhost` name works without a hosts entry, but the compose file must use `http://` (see the Tailscale section) |
 | `VIKUNJA_JWTSECRET` | (generated) | Signs Vikunja logins. Keep it the same when moving machines |
 | `VIKUNJA_TOKEN` | | Vikunja API token for the helper. Needs read/create/update on tasks; no delete |
 | `NOTES_DIR` | `~/Documents/meeting-notes` | Folder OpenWhispr writes notes to |
@@ -156,6 +192,8 @@ tail -40 docket.log                     # what the launcher did
 | `giving up` on a note | Fix the cause above, then `touch` the note to retry |
 | Asked for a password on start | You're not in the `docker` group yet: reboot after `usermod` |
 | Board address doesn't open | Use a `*.localhost` name, or check `/etc/hosts`; try a private window if the browser forces https |
+| "Network error" at login, or "use the Vikunja installation at …" | The address you opened doesn't match the public URL. Open `https://leo-pc.taila60bcc.ts.net`, check `VIKUNJA_HOST` in `.env`, run `docker compose up -d`, then clear the site data in the phone browser |
+| Page doesn't open on the phone | Tailscale must be connected on the phone (other VPNs off) and on the PC; check `tailscale serve status` on the PC |
 | Approved card doesn't move | The "Suggested project" line in its description must match a project name exactly |
 
 To re-run a note: `touch ~/Documents/meeting-notes/<note>.md`.
