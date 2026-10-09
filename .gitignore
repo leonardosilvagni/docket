@@ -4,6 +4,8 @@
 db/
 files/
 helper/state/
+calendar/data/
+calendar/state/
 meeting-notes/
 # Logs and caches
 *.log

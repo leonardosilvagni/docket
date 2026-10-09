@@ -1,0 +1,59 @@
+# OPTIONAL: show your Vikunja due dates in your phone's calendar.
+# Not used unless you turn it on: run `bash calendar/setup-calendar.sh` (Linux),
+# which adds this line to .env:
+#   COMPOSE_FILE=docker-compose.yml:calendar/docker-compose.calendar.yml
+# By hand / Windows: docker compose -f docker-compose.yml -f calendar/docker-compose.calendar.yml up -d
+# Paths below are relative to the repo folder (the first compose file).
+services:
+  radicale:
+    build: ./calendar
+    image: docket-calendar
+    container_name: docket-radicale
+    user: "1000:1000"
+    command:
+      - sh
+      - -c
+      - |
+        printf '%s:%s\n' "$$RADICALE_USER" "$$RADICALE_PASSWORD" > /tmp/users
+        exec radicale --config /etc/radicale/config
+    environment:
+      RADICALE_USER: ${RADICALE_USER:?run calendar/setup-calendar.sh or set RADICALE_USER in .env}
+      RADICALE_PASSWORD: ${RADICALE_PASSWORD:?set RADICALE_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5232:5232"
+    volumes:
+      - ./calendar/radicale.conf:/etc/radicale/config:ro
+      - ./calendar/data:/data
+    mem_limit: 128m
+    restart: on-failure
+
+  # Reads Vikunja tasks that have a due date and writes them as events into the
+  # Radicale calendar. One way: it never changes anything in Vikunja.
+  calendar-sync:
+    build: ./calendar
+    image: docket-calendar
+    container_name: docket-calendar-sync
+    user: "1000:1000"
+    command: python -u /app/sync.py
+    environment:
+      VIKUNJA_URL: http://vikunja:3456
+      VIKUNJA_TOKEN: ${VIKUNJA_TOKEN:?set VIKUNJA_TOKEN in .env}
+      CALENDAR_VIKUNJA_TOKEN: ${CALENDAR_VIKUNJA_TOKEN:-}
+      RADICALE_URL: http://radicale:5232
+      RADICALE_USER: ${RADICALE_USER}
+      RADICALE_PASSWORD: ${RADICALE_PASSWORD}
+      CALENDAR_TZ: ${CALENDAR_TZ:-UTC}
+      CALENDAR_SYNC_SECONDS: ${CALENDAR_SYNC_SECONDS:-300}
+      CALENDAR_SKIP_PROJECTS: ${CALENDAR_SKIP_PROJECTS:-Inbox}
+      CALENDAR_ALLDAY_TIMES: ${CALENDAR_ALLDAY_TIMES:-00:00,12:00,13:00}
+      CALENDAR_EVENT_MINUTES: ${CALENDAR_EVENT_MINUTES:-30}
+      LINK_BASE: https://${VIKUNJA_HOST:-docket.localhost}
+      STATE_FILE: /state/calendar.json
+    volumes:
+      - ./calendar/sync.py:/app/sync.py:ro
+      - ./calendar/state:/state
+    mem_limit: 64m
+    depends_on:
+      - vikunja
+      - radicale
+    restart: on-failure

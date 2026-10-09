@@ -129,6 +129,45 @@ Both should print `https://leo-pc.taila60bcc.ts.net/`.
 
 **Going back to local-only** (`docket.localhost`): set `VIKUNJA_HOST=docket.localhost` and change `https://` back to `http://` in the `VIKUNJA_SERVICE_PUBLICURL` line of `docker-compose.yml`, then `docker compose up -d`.
 
+## Optional: due dates in your phone's calendar
+
+Not needed for anything above. It shows every open Vikunja task that has a due date as an event in a calendar on your phone. One way: Vikunja stays the source of truth, and editing an event in the calendar app does not change the task.
+
+```
+Vikunja ──(read only)──▶ calendar-sync ──▶ Radicale (CalDAV server) ──Tailscale──▶ DAVx5 ──▶ phone calendar
+```
+
+Two small extra containers, all in the `calendar/` folder (about 100 MB of disk, roughly 50 MB of RAM together). It needs the phone access from the Tailscale section above.
+
+**Turn it on** (Linux):
+
+```bash
+bash calendar/setup-calendar.sh
+```
+
+It creates a calendar user and password in `.env`, adds `COMPOSE_FILE=docker-compose.yml:calendar/docker-compose.calendar.yml` (that line is what turns it on), builds the image and starts both services. It then prints the remaining steps:
+
+1. On the PC: `sudo tailscale serve --bg --https=8443 http://127.0.0.1:5232` (check with `tailscale serve status`).
+2. On the phone: install **DAVx5** → **+** → *Login with URL and user name*. Base URL `https://leo-pc.taila60bcc.ts.net:8443/`, user and password from `.env` (`RADICALE_USER`, `RADICALE_PASSWORD`). Tick the **Vikunja tasks** calendar, allow the calendar permission, and set a sync interval.
+3. Your calendar app (Google Calendar, Fossify, …) lists it under the DAVx5 account. Enable it there if it is hidden.
+
+**What shows up**
+
+- Open tasks with a due date, in every project except the ones in `CALENDAR_SKIP_PROJECTS` (default `Inbox`, so unapproved suggestions stay out). Archived projects are left out too.
+- A date-only deadline becomes an **all-day** event. A deadline with a real time becomes a 30-minute event starting then. Times in `CALENDAR_ALLDAY_TIMES` (your timezone; default 00:00, 12:00, 13:00) and the 17:00 UTC the inbox helper uses count as "date only".
+- Title, project, labels, the first part of the description and a link back to the task are in the event. Events are marked *free*, so a deadline doesn't make you look busy.
+- Done, deleted or un-dated tasks disappear from the calendar at the next refresh (`CALENDAR_SYNC_SECONDS`, default 5 minutes).
+
+**Notes**
+
+- It only refreshes while the PC is on (Docket running). With the phone off Tailscale or the PC off, the phone keeps showing the last synced events.
+- Vikunja is only read. The sync uses `VIKUNJA_TOKEN`; to be stricter, create a separate token with read access only and put it in `.env` as `CALENDAR_VIKUNJA_TOKEN`.
+- Radicale listens on `127.0.0.1` only and needs the user and password. Nothing else is reachable from your network.
+- Nothing to back up: the calendar is rebuilt from Vikunja. `calendar/data/` and `calendar/state/` are not in git.
+- Logs: `docker compose logs --tail 20 calendar-sync`.
+- **Windows** (untested): start with `docker compose -f docker-compose.yml -f docker-compose.windows.yml -f calendar/docker-compose.calendar.yml up -d`, after adding `RADICALE_USER`, `RADICALE_PASSWORD` and `CALENDAR_TZ` to `.env` by hand and creating the folders `calendar\data` and `calendar\state`.
+- **Turn it off:** delete the `COMPOSE_FILE` line from `.env`, then `docker compose down --remove-orphans`.
+
 ## Set up on Windows (untested)
 
 Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in the repo folder:
@@ -157,6 +196,13 @@ Install Docker Desktop (WSL 2), LM Studio and OpenWhispr for Windows. Then, in t
 | `POLL_SECONDS` | `60` | How often the helper checks for new notes and approved cards |
 | `PROCESS_EXISTING` | `0` | `1` also processes notes already in the folder on first start |
 | `MAX_TRIES` | `2` | Attempts per note before giving up |
+| `RADICALE_USER`, `RADICALE_PASSWORD` | | Calendar login (optional calendar; made by `calendar/setup-calendar.sh`) |
+| `CALENDAR_TZ` | `UTC` | Your timezone for due times, e.g. `America/New_York` |
+| `CALENDAR_SYNC_SECONDS` | `300` | How often the calendar refreshes |
+| `CALENDAR_SKIP_PROJECTS` | `Inbox` | Projects left out of the calendar, comma separated |
+| `CALENDAR_ALLDAY_TIMES` | `00:00,12:00,13:00` | Due times (your timezone) treated as "date only" → all-day events |
+| `CALENDAR_EVENT_MINUTES` | `30` | Length of an event for a task due at a specific time |
+| `CALENDAR_VIKUNJA_TOKEN` | | Optional read-only Vikunja token for the calendar (default: `VIKUNJA_TOKEN`) |
 
 Restart the helper after changing `.env`: `docker compose restart inbox-helper`.
 
@@ -167,12 +213,13 @@ Restart the helper after changing `.env`: `docker compose restart inbox-helper`.
 | `setup.sh` | One-time Linux setup |
 | `docker-compose.yml` | Vikunja + inbox helper |
 | `docker-compose.windows.yml` | Windows (Docker Desktop) override |
+| `calendar/` | Optional phone calendar: `setup-calendar.sh`, `docker-compose.calendar.yml`, `sync.py`, `radicale.conf`, `Dockerfile` |
 | `.env.example` | Settings template |
 | `helper/helper.py` | The inbox helper |
 | `docket.sh`, `docket.desktop` | Linux launcher and app-menu entry |
 | `docket.ps1` | Windows launcher |
 
-Not in git (see `.gitignore`): `.env` (tokens), `db/` and `files/` (your tasks), `helper/state/`, logs.
+Not in git (see `.gitignore`): `.env` (tokens), `db/` and `files/` (your tasks), `helper/state/`, `calendar/data/`, `calendar/state/`, logs.
 
 ## Troubleshooting
 
@@ -194,6 +241,7 @@ tail -40 docket.log                     # what the launcher did
 | Board address doesn't open | Use a `*.localhost` name, or check `/etc/hosts`; try a private window if the browser forces https |
 | "Network error" at login, or "use the Vikunja installation at …" | The address you opened doesn't match the public URL. Open `https://leo-pc.taila60bcc.ts.net`, check `VIKUNJA_HOST` in `.env`, run `docker compose up -d`, then clear the site data in the phone browser |
 | Page doesn't open on the phone | Tailscale must be connected on the phone (other VPNs off) and on the PC; check `tailscale serve status` on the PC |
+| Calendar on the phone is empty or stale | `docker compose logs --tail 20 calendar-sync` shows what it did; check DAVx5 can reach `https://<name>.ts.net:8443/` (Tailscale on, `tailscale serve status`), and that the task has a due date and isn't in the Inbox |
 | Approved card doesn't move | The "Suggested project" line in its description must match a project name exactly |
 
 To re-run a note: `touch ~/Documents/meeting-notes/<note>.md`.

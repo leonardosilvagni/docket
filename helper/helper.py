@@ -119,10 +119,16 @@ class Board:
 
     def open_titles(self):
         """Titles of open tasks, to skip duplicate suggestions. Best effort: never blocks a note."""
-        out, page = set(), 1
+        out, page, base = set(), 1, "/tasks"   # older Vikunja versions: /tasks/all
         try:
             while page <= 20:
-                batch = api("GET", f"/tasks/all?per_page=50&page={page}") or []
+                try:
+                    batch = api("GET", f"{base}?per_page=50&page={page}") or []
+                except urllib.error.HTTPError as e:
+                    if page == 1 and base == "/tasks" and e.code in (400, 404, 405):
+                        base = "/tasks/all"
+                        continue
+                    raise
                 out |= {norm(t["title"]) for t in batch if not t.get("done")}
                 if len(batch) < 50:
                     break
